@@ -13,11 +13,11 @@ DISeL keeps the rank-$r$ factorisation but multiplies each rank-one component
 by an input-dependent sigmoid gate:
 
 $$
-f(x) = A\, G(x)\, B\, x = \sum_{i=1}^{r} g_i(x)\, a_i\, b_i^\top x,
+f(x) = A G(x) B x = \sum_{i=1}^{r} g_i(x) a_i b_i^\top x
 $$
 
 $$
-g(x) = \sigma(W_g x + b_g) \in (0,1)^r.
+g(x) = \sigma(W_g x + b_g) \in (0,1)^r
 $$
 
 Two properties follow directly from the parameterisation:
@@ -33,7 +33,7 @@ Two properties follow directly from the parameterisation:
    In practice the gates do exactly that — see the paper's interpretability
    section for histograms by input domain and module type.
 
-The gate adds $r\, d_x + r$ parameters per adapted layer (negligible next to
+The gate adds $r d_x + r$ parameters per adapted layer (negligible next to
 $A, B$) and a single matrix-vector product per forward pass. Because gate
 learning is a qualitatively different task from refining $A, B$, we train it
 with its own (larger) learning rate — by default $5\times$ the LoRA learning
