@@ -180,12 +180,14 @@ optimizer = disel.build_optimizer(
 # Plug `optimizer` into HuggingFace Trainer or your loop. See examples/.
 ```
 
-`enable_disel` adds a `disel_gate` `ModuleDict` to every PEFT `LoraLayer` and
-registers a `LoraVariant` so that PEFT's forward, save, and load paths route
-through the DISeL computation. Calling `model.save_pretrained(...)` writes the
-gate parameters into the same `adapter_model.safetensors` as the LoRA matrices,
+`enable_disel` adds a `lora_disel_gate` `ModuleDict` to every PEFT `LoraLayer`
+and registers a `LoraVariant` so PEFT's forward path routes through the DISeL
+computation. The `lora_` prefix on the ModuleDict name matches the convention
+DoRA uses (`lora_magnitude_vector`) and is what triggers PEFT's state-dict
+serialiser to include the gate parameters — so `model.save_pretrained(...)`
+writes them into the same `adapter_model.safetensors` as the LoRA matrices,
 and `PeftModel.from_pretrained(...)` followed by another `enable_disel(...)`
-restores them verbatim.
+restores them bit-exactly (covered by `tests/test_disel.py::test_save_load_round_trip`).
 
 ## Results
 

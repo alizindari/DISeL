@@ -117,22 +117,77 @@ def test_gradient_reaches_gate_parameters():
 
 
 def test_save_load_round_trip(tmp_path: Path):
+    """Round-trip a trained model and verify the gate weights actually persist.
+
+    Naively comparing logits at init is not enough: with lora_B = 0 the model
+    output is independent of the gate values, so a buggy save/load that drops
+    the gates would still pass. We therefore take an optimizer step (which
+    moves both lora_B and the gates off their init), save, rebuild, and
+    require the saved gate parameters to load back bit-exactly.
+    """
     torch.manual_seed(0)
     model, config = _build_model()
-    model.eval()
+    model.train()
     inputs = _dummy_batch()
+
+    # Two steps so the gates move off their init: step 1 nudges lora_B off
+    # zero (which gives the gates a non-zero gradient path), step 2 actually
+    # moves W_g / b_g.
+    opt = disel.build_optimizer(model, base_lr=1e-2, gate_lr=1e-2)
+    for _ in range(2):
+        out = model(inputs, labels=inputs)
+        out.loss.backward()
+        opt.step()
+        opt.zero_grad()
+
+    # Snapshot the gate parameters and a reference forward pass.
+    gate_state_before = {
+        name: param.detach().clone()
+        for name, param in model.named_parameters()
+        if f".{disel.GATE_PARAM_KEY}." in name
+    }
+    assert gate_state_before, "no gate parameters present in trained model"
+    # Confirm the gates have actually moved (otherwise the test is vacuous).
+    for name, p in gate_state_before.items():
+        if name.endswith(".bias"):
+            assert not torch.allclose(p, torch.full_like(p, -3.0)), (
+                f"{name} did not move from its init"
+            )
+
+    model.eval()
     with torch.no_grad():
         before = model(inputs).logits.clone()
 
     model.save_pretrained(tmp_path)
 
-    # Rebuild and reload.
+    # Rebuild and reload from scratch.
     base = AutoModelForCausalLM.from_pretrained(TINY_MODEL).eval()
     reloaded = PeftModel.from_pretrained(base, tmp_path)
+    # enable_disel attaches *fresh* gates (bias=-3, random W_g); the call to
+    # load_state_dict implicit in from_pretrained then has to overwrite them
+    # with the saved values for the round-trip to succeed.
     disel.enable_disel(reloaded, config)
-    # Load the gate weights from the saved adapter manually. PEFT picks up the
-    # gate ModuleDict because it is registered via `adapter_layer_names`, so
-    # `from_pretrained` already filled them in.
+    # Trigger one more load now that the gate ModuleDicts exist on the layers.
+    from safetensors.torch import load_file
+    state = load_file(tmp_path / "adapter_model.safetensors")
+    missing, unexpected = reloaded.load_state_dict(state, strict=False)
+    saved_gate_keys = [k for k in state if disel.GATE_PARAM_KEY in k]
+    assert saved_gate_keys, (
+        "no gate parameters were written to adapter_model.safetensors — "
+        "PEFT's state-dict filter is not picking them up"
+    )
+
+    gate_state_after = {
+        name: param.detach().clone()
+        for name, param in reloaded.named_parameters()
+        if f".{disel.GATE_PARAM_KEY}." in name
+    }
+    for name, before_p in gate_state_before.items():
+        after_p = gate_state_after[name]
+        assert torch.equal(before_p, after_p), (
+            f"{name} did not round-trip exactly"
+        )
+
     reloaded.eval()
     with torch.no_grad():
         after = reloaded(inputs).logits

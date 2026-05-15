@@ -23,7 +23,7 @@ class DiselLinearVariant(LoraVariant):
             \\cdot \\text{scaling}
 
     where :math:`g(x) = \\sigma(W_g x + b_g) \\in (0, 1)^r` is produced by
-    ``module.disel_gate[active_adapter]``.
+    ``module.lora_disel_gate[active_adapter]``.
 
     The gate is input-dependent, so ``merge_and_unload`` is not supported.
     """
@@ -31,11 +31,11 @@ class DiselLinearVariant(LoraVariant):
     @staticmethod
     def init(module: LoraLayer, adapter_name: str, **kwargs) -> None:
         # Gate construction and registration is handled by
-        # `disel.enable_disel(...)`. We add the `disel_gate` ModuleDict name to
+        # `disel.enable_disel(...)`. We add the `lora_disel_gate` ModuleDict name to
         # the layer's `adapter_layer_names` here so PEFT's save/load picks it
         # up alongside the LoRA matrices.
-        if "disel_gate" not in module.adapter_layer_names:
-            module.adapter_layer_names = module.adapter_layer_names + ("disel_gate",)
+        if "lora_disel_gate" not in module.adapter_layer_names:
+            module.adapter_layer_names = module.adapter_layer_names + ("lora_disel_gate",)
 
     @staticmethod
     def merge_safe(module, active_adapter, orig_weight):  # noqa: D401
@@ -69,7 +69,7 @@ class DiselLinearVariant(LoraVariant):
         lora_B = module.lora_B[active_adapter]
         dropout = module.lora_dropout[active_adapter]
         scaling = module.scaling[active_adapter]
-        gate = module.disel_gate[active_adapter]
+        gate = module.lora_disel_gate[active_adapter]
 
         x_dropped = dropout(x)
         # Run the gate in the same dtype as the LoRA matrices.

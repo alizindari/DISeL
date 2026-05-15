@@ -32,7 +32,7 @@ __all__ = ["enable_disel", "build_optimizer", "GATE_PARAM_KEY"]
 # Name under which gate ModuleDicts are stored on each LoraLayer. Matches the
 # entry added to `adapter_layer_names` by :class:`DiselLinearVariant.init`, so
 # PEFT's `set_peft_model_state_dict` round-trips the gate parameters.
-GATE_PARAM_KEY = "disel_gate"
+GATE_PARAM_KEY = "lora_disel_gate"
 
 
 def _make_gate(in_features: int, rank: int, config: DiselConfig) -> nn.Module:
