@@ -12,7 +12,13 @@ Public API:
 """
 
 from .config import DiselConfig
-from .integration import GATE_PARAM_KEY, build_optimizer, enable_disel
+from .integration import (
+    GATE_PARAM_KEY,
+    build_optimizer,
+    enable_disel,
+    from_pretrained,
+    load_gate_state_dict,
+)
 from .layer import LightRankGate, RankGate
 from .variant import DiselLinearVariant
 
@@ -24,6 +30,8 @@ __all__ = [
     "RankGate",
     "build_optimizer",
     "enable_disel",
+    "from_pretrained",
+    "load_gate_state_dict",
 ]
 
 __version__ = "0.1.0"

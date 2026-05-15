@@ -1,22 +1,33 @@
 """Glue between :class:`DiselConfig` and a PEFT-wrapped model.
 
-Two public entry points:
+Public entry points:
 
 * :func:`enable_disel` walks a ``PeftModel`` produced by
   :func:`peft.get_peft_model`, attaches a per-rank gate to every
   :class:`peft.tuners.lora.layer.LoraLayer`, and registers
-  :class:`disel.variant.DiselLinearVariant` for the active adapter so that
-  PEFT's forward and save/load paths route through the DISeL computation.
+  :class:`disel.variant.DiselLinearVariant` for the active adapter.
+* :func:`build_optimizer` constructs the three-group ``AdamW`` used in the
+  paper (weight-decay matrices, no-decay biases/LayerNorms, gate group with
+  separate LR and no weight decay).
+* :func:`load_gate_state_dict` loads the gate tensors from a saved adapter
+  directory into a model that already has DISeL attached.
+* :func:`from_pretrained` is a one-call loader that wraps PEFT's
+  ``PeftModel.from_pretrained`` + ``enable_disel`` + ``load_gate_state_dict``.
 
-* :func:`build_optimizer` constructs an ``AdamW`` with three parameter groups
-  matching the original paper: weight-decay matrices, no-decay biases /
-  LayerNorms, and gate parameters (separate learning rate, weight decay
-  disabled so the gate cannot be driven to zero).
+A short note on persistence. Vanilla PEFT does not know about DISeL, so the
+naive sequence ``PeftModel.from_pretrained(base, path)`` builds LoRA layers
+*without* the ``lora_disel_gate`` ModuleDicts, and PEFT's state-dict loader
+silently drops the gate keys it doesn't have a destination for. We therefore
+do the load in three explicit steps: build PEFT layers, attach gates with
+``enable_disel``, then re-apply the saved state dict to fill the gate
+parameters. :func:`from_pretrained` does this for you.
 """
 
 from __future__ import annotations
 
-from typing import Iterable
+import warnings
+from pathlib import Path
+from typing import Iterable, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -27,7 +38,13 @@ from .config import DiselConfig
 from .layer import LightRankGate, RankGate
 from .variant import DiselLinearVariant
 
-__all__ = ["enable_disel", "build_optimizer", "GATE_PARAM_KEY"]
+__all__ = [
+    "GATE_PARAM_KEY",
+    "build_optimizer",
+    "enable_disel",
+    "from_pretrained",
+    "load_gate_state_dict",
+]
 
 # Name under which gate ModuleDicts are stored on each LoraLayer. Matches the
 # entry added to `adapter_layer_names` by :class:`DiselLinearVariant.init`, so
@@ -186,3 +203,133 @@ def build_optimizer(
         raise RuntimeError("build_optimizer found no trainable parameters in the model.")
 
     return torch.optim.AdamW(groups, betas=betas, eps=eps)
+
+
+def _read_adapter_state(adapter_path: Path) -> dict[str, torch.Tensor]:
+    sft = adapter_path / "adapter_model.safetensors"
+    bin_ = adapter_path / "adapter_model.bin"
+    if sft.is_file():
+        from safetensors.torch import load_file
+        return load_file(str(sft))
+    if bin_.is_file():
+        return torch.load(bin_, map_location="cpu", weights_only=True)
+    raise FileNotFoundError(
+        f"no adapter_model.safetensors or adapter_model.bin in {adapter_path}"
+    )
+
+
+def load_gate_state_dict(
+    model: PeftModel,
+    adapter_path: Union[str, Path],
+    adapter_name: str = "default",
+) -> PeftModel:
+    """Load gate weights from a saved adapter directory into ``model``.
+
+    The model must already have DISeL attached (i.e. :func:`enable_disel` must
+    have run, so the ``lora_disel_gate`` ModuleDicts exist on every LoRA
+    layer). This function reads ``adapter_model.safetensors`` (or
+    ``adapter_model.bin``) from ``adapter_path``, filters for keys containing
+    ``GATE_PARAM_KEY``, and applies them with ``load_state_dict(strict=False)``.
+
+    Raises ``ValueError`` if the checkpoint has no gate keys (the saved model
+    was not trained with DISeL), and ``RuntimeError`` if there are gate keys
+    in the checkpoint that have no destination in the model (likely an
+    adapter-name mismatch).
+    """
+    adapter_path = Path(adapter_path)
+    state = _read_adapter_state(adapter_path)
+    gate_state = {k: v for k, v in state.items() if GATE_PARAM_KEY in k}
+    if not gate_state:
+        raise ValueError(
+            f"No '{GATE_PARAM_KEY}' keys in {adapter_path}; the saved adapter "
+            "does not appear to have been trained with DISeL."
+        )
+
+    missing, unexpected = model.load_state_dict(gate_state, strict=False)
+    unexpected_gate_keys = [k for k in unexpected if GATE_PARAM_KEY in k]
+    if unexpected_gate_keys:
+        raise RuntimeError(
+            f"{len(unexpected_gate_keys)} gate key(s) in the checkpoint have "
+            "no destination in the model — did you forget to call enable_disel "
+            "first, or pass the wrong adapter_name? Examples: "
+            f"{unexpected_gate_keys[:3]}"
+        )
+
+    # Sanity-check: every layer's gate should now have a loaded weight.
+    loaded_layers = {k.rsplit(f".{GATE_PARAM_KEY}.", 1)[0] for k in gate_state}
+    model_layers = {
+        n.rsplit(f".{GATE_PARAM_KEY}.", 1)[0]
+        for n, _ in model.named_parameters()
+        if GATE_PARAM_KEY in n
+    }
+    diff = model_layers - loaded_layers
+    if diff:
+        warnings.warn(
+            f"{len(diff)} layer(s) have DISeL gates with no matching entry in "
+            f"the checkpoint (they keep their fresh init). Examples: "
+            f"{sorted(diff)[:3]}"
+        )
+    return model
+
+
+def from_pretrained(
+    base_model: nn.Module,
+    adapter_path: Union[str, Path],
+    config: Optional[DiselConfig] = None,
+    adapter_name: str = "default",
+    **kwargs,
+) -> PeftModel:
+    """Load a DISeL-gated PEFT model from a saved adapter directory.
+
+    Equivalent to::
+
+        peft_model = PeftModel.from_pretrained(base_model, adapter_path, ...)
+        enable_disel(peft_model, config)
+        load_gate_state_dict(peft_model, adapter_path)
+
+    in a single call, with the saved ``DiselConfig`` auto-loaded from
+    ``adapter_config.json`` when ``config`` is ``None``. Extra ``**kwargs`` are
+    forwarded to :meth:`peft.PeftModel.from_pretrained` (e.g. ``device_map``,
+    ``torch_dtype``, ``is_trainable``).
+
+    Args:
+        base_model: The base ``nn.Module`` (e.g. output of
+            ``AutoModelForCausalLM.from_pretrained``).
+        adapter_path: Directory written by ``model.save_pretrained(...)`` at
+            training time.
+        config: The :class:`DiselConfig` used at training time. If ``None``,
+            we read it from ``adapter_path/adapter_config.json``. Provide one
+            explicitly only if you want to override gate hyperparameters at
+            load time (rare).
+        adapter_name: PEFT adapter name.
+    """
+    adapter_path = Path(adapter_path)
+    if config is None:
+        # PEFT's PeftConfig.from_pretrained dispatches on the `peft_type` field
+        # in adapter_config.json, which is "LORA", so it would build a plain
+        # LoraConfig and drop our extra fields. Read the JSON ourselves.
+        import inspect
+        import json
+        cfg_path = adapter_path / "adapter_config.json"
+        if not cfg_path.is_file():
+            raise FileNotFoundError(
+                f"{cfg_path} not found; cannot infer DiselConfig automatically. "
+                "Pass `config=DiselConfig(...)` explicitly."
+            )
+        raw = json.loads(cfg_path.read_text())
+        # DiselConfig inherits LoraConfig's fields; drop any keys it doesn't
+        # accept (e.g. PEFT runtime metadata) and forward the rest.
+        valid = set(inspect.signature(DiselConfig).parameters)
+        config = DiselConfig(**{k: v for k, v in raw.items() if k in valid})
+    elif not isinstance(config, DiselConfig):
+        raise TypeError(
+            f"from_pretrained expected DiselConfig or None, "
+            f"got {type(config).__name__}"
+        )
+
+    peft_model = PeftModel.from_pretrained(
+        base_model, str(adapter_path), adapter_name=adapter_name, **kwargs,
+    )
+    enable_disel(peft_model, config, adapter_name=adapter_name)
+    load_gate_state_dict(peft_model, adapter_path, adapter_name=adapter_name)
+    return peft_model

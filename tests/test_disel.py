@@ -160,22 +160,19 @@ def test_save_load_round_trip(tmp_path: Path):
 
     model.save_pretrained(tmp_path)
 
-    # Rebuild and reload from scratch.
-    base = AutoModelForCausalLM.from_pretrained(TINY_MODEL).eval()
-    reloaded = PeftModel.from_pretrained(base, tmp_path)
-    # enable_disel attaches *fresh* gates (bias=-3, random W_g); the call to
-    # load_state_dict implicit in from_pretrained then has to overwrite them
-    # with the saved values for the round-trip to succeed.
-    disel.enable_disel(reloaded, config)
-    # Trigger one more load now that the gate ModuleDicts exist on the layers.
+    # Verify the gates actually made it into the safetensors file before we
+    # try to load — this would have caught the original `disel_gate` bug.
     from safetensors.torch import load_file
     state = load_file(tmp_path / "adapter_model.safetensors")
-    missing, unexpected = reloaded.load_state_dict(state, strict=False)
     saved_gate_keys = [k for k in state if disel.GATE_PARAM_KEY in k]
     assert saved_gate_keys, (
         "no gate parameters were written to adapter_model.safetensors — "
         "PEFT's state-dict filter is not picking them up"
     )
+
+    # Rebuild from scratch using the public one-call loader.
+    base = AutoModelForCausalLM.from_pretrained(TINY_MODEL).eval()
+    reloaded = disel.from_pretrained(base, tmp_path)
 
     gate_state_after = {
         name: param.detach().clone()

@@ -184,10 +184,48 @@ optimizer = disel.build_optimizer(
 and registers a `LoraVariant` so PEFT's forward path routes through the DISeL
 computation. The `lora_` prefix on the ModuleDict name matches the convention
 DoRA uses (`lora_magnitude_vector`) and is what triggers PEFT's state-dict
-serialiser to include the gate parameters — so `model.save_pretrained(...)`
-writes them into the same `adapter_model.safetensors` as the LoRA matrices,
-and `PeftModel.from_pretrained(...)` followed by another `enable_disel(...)`
-restores them bit-exactly (covered by `tests/test_disel.py::test_save_load_round_trip`).
+serialiser to include the gate parameters — so saving with the standard
+`model.save_pretrained(...)` writes them into the same
+`adapter_model.safetensors` as the LoRA matrices.
+
+### Saving and loading
+
+Saving is just the standard PEFT call:
+
+```python
+model.save_pretrained("checkpoints/disel_run")
+```
+
+Loading needs three steps in a specific order, because vanilla PEFT does not
+know about DISeL: (1) PEFT rebuilds the LoRA layers, (2) we attach fresh
+gates, (3) we re-apply the saved state dict to populate the gates. We expose
+`disel.from_pretrained` to do all three in one call:
+
+```python
+from transformers import AutoModelForCausalLM
+import disel
+
+base = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Llama-2-7b-hf", torch_dtype=torch.bfloat16,
+)
+model = disel.from_pretrained(base, "checkpoints/disel_run")
+model.eval()
+```
+
+If you prefer to assemble the pieces manually (e.g. you already called
+`PeftModel.from_pretrained` from your own pipeline), use the lower-level
+helper:
+
+```python
+peft_model = PeftModel.from_pretrained(base, "checkpoints/disel_run")
+disel.enable_disel(peft_model, config)              # attach fresh gates
+disel.load_gate_state_dict(peft_model, "checkpoints/disel_run")  # fill them
+```
+
+Naively calling `PeftModel.from_pretrained` *without* the second/third step
+silently leaves the gates at their fresh init — covered by
+`tests/test_disel.py::test_save_load_round_trip`, which asserts bit-exact
+parameter round-trips and matching forward passes.
 
 ## Results
 
