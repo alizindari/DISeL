@@ -10,12 +10,16 @@
 [![PEFT 0.13–0.19](https://img.shields.io/badge/peft-0.13–0.19-FFD43B.svg)](https://github.com/huggingface/peft)
 [![Paper](https://img.shields.io/badge/paper-coming_soon-lightgrey.svg)](#citation)
 
-<img src="assets/llama_tradeoff.png" width="78%"/>
+<img src="assets/llama_tradeoff.png" width="48%"/>
+<img src="assets/mistral_tradeoff.png" width="48%"/>
 
-<em>LLaMA-2-7B fine-tuned on MetaMathQA. <strong>DISeL (red)</strong> sits on the
-base model's retention line while matching the strongest fine-tuning accuracy.
-Every other adapter family either forgets visibly (LoRA / DoRA / Full FT) or
-loses accuracy to preserve retention (AdaLoRA).</em>
+<em><strong>Left:</strong> LLaMA-2-7B on MetaMathQA (GSM8K accuracy vs. retention
+on 14 held-out benchmarks). <strong>Right:</strong> Mistral-7B on
+Magicoder-Evol-Instruct-110K (HumanEval pass@1 vs. the same retention suite).
+In both cases <strong>DISeL (red)</strong> sits on the base-model retention line
+while matching the strongest fine-tuning accuracy; every other adapter family
+either forgets visibly (LoRA / DoRA / Full FT) or loses accuracy to preserve
+retention (AdaLoRA).</em>
 
 </div>
 
@@ -185,29 +189,18 @@ restores them verbatim.
 
 ## Results
 
-Across three model families and three evaluation suites, DISeL keeps retention
-within a fraction of a point of the unmodified base model while matching or
-exceeding the fine-tuning accuracy of LoRA, DoRA, AdaLoRA, and Full FT.
+The hero figure above covers the two large-scale settings: **mathematical
+reasoning** (LLaMA-2-7B / MetaMathQA, evaluated on GSM8K) and **code
+generation** (Mistral-7B / Magicoder, evaluated on HumanEval pass@1). In both,
+DISeL crosses the base-model retention line at the largest ranks while
+matching the strongest fine-tuning accuracy: LoRA and DoRA give up 2–5 points
+of retention for similar accuracy, AdaLoRA preserves retention but drops 10+
+accuracy points, and Full FT moves several points to the left of the retention
+line.
 
-### Mathematical reasoning — LLaMA-2-7B on MetaMathQA
-
-See the hero figure at the top of this README. DISeL crosses the base-model
-retention line (dashed) at the largest ranks while reaching ≈60% GSM8K
-accuracy; LoRA and DoRA give up 2–5 points of retention for similar accuracy;
-AdaLoRA preserves retention but drops 10+ accuracy points; Full FT moves
-∼4 points to the left of the retention line.
-
-### Code generation — Mistral-7B on Magicoder
-
-<div align="center">
-<img src="assets/mistral_tradeoff.png" width="78%"/>
-<br/>
-<em>Mistral-7B fine-tuned on Magicoder-Evol-Instruct-110K, evaluated on
-HumanEval (pass@1) vs. a 14-benchmark retention suite. DISeL reaches ≈70%
-HumanEval while staying at the base model's retention line.</em>
-</div>
-
-### GLUE — RoBERTa-base
+The same picture also holds on a much smaller architecture (RoBERTa-base on
+five GLUE tasks), where the appropriate retention metric is masked-LM
+perplexity on three out-of-domain corpora rather than benchmark accuracy:
 
 <!-- Drop the RoBERTa GLUE tradeoff figure into assets/roberta_glue.png to
      enable this block. The PDF version is `all_methods_simple_acc.pdf`. -->
@@ -217,9 +210,9 @@ HumanEval while staying at the base model's retention line.</em>
 to <code>assets/roberta_glue.png</code>)</em>
 <br/>
 <em>RoBERTa-base fine-tuned on five GLUE tasks. DISeL keeps masked-LM
-perplexity near the pre-trained baseline (≈9, dashed line) while matching
-the accuracy of AdaLoRA and Full FT; LoRA, DoRA, and especially Full FT shift
-1–2 decades to the right on the perplexity axis.</em>
+perplexity near the pre-trained baseline (≈9, dashed line) while matching the
+accuracy of AdaLoRA and Full FT; LoRA, DoRA, and especially Full FT shift 1–2
+decades to the right on the perplexity axis.</em>
 </div>
 
 ## What is and isn't supported
