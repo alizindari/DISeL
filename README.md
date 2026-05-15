@@ -13,15 +13,17 @@ DISeL keeps the rank-$r$ factorisation but multiplies each rank-one component
 by an input-dependent sigmoid gate:
 
 $$
-f(x) \;=\; A\,G(x)\,B\,x \;=\; \sum_{i=1}^{r} g_i(x)\,a_i\,b_i^{\!\top} x,
-\qquad
-g(x) \;=\; \sigma(W_g\,x + b_g) \in (0,1)^{r}.
+f(x) = A\, G(x)\, B\, x = \sum_{i=1}^{r} g_i(x)\, a_i\, b_i^\top x,
+$$
+
+$$
+g(x) = \sigma(W_g x + b_g) \in (0,1)^r.
 $$
 
 Two properties follow directly from the parameterisation:
 
 1. **The model starts at the pre-trained mapping.** Initialising $b_g$ to a
-   small negative value (we use $-3$, so $\sigma(-3)\!\approx\!0.05$) closes
+   small negative value (we use $-3$, so $\sigma(-3) \approx 0.05$) closes
    every gate at step 0, and combined with LoRA's standard zero-init on $B$
    this means $f(x)=0$ everywhere. Adaptation only kicks in when some gate
    learns to open.
@@ -31,9 +33,9 @@ Two properties follow directly from the parameterisation:
    In practice the gates do exactly that — see the paper's interpretability
    section for histograms by input domain and module type.
 
-The gate adds $r\,d_x + r$ parameters per adapted layer (negligible next to
-$A,B$) and a single matrix-vector product per forward pass. Because gate
-learning is a qualitatively different task from refining $A,B$, we train it
+The gate adds $r\, d_x + r$ parameters per adapted layer (negligible next to
+$A, B$) and a single matrix-vector product per forward pass. Because gate
+learning is a qualitatively different task from refining $A, B$, we train it
 with its own (larger) learning rate — by default $5\times$ the LoRA learning
 rate — exposed as a separate optimiser group.
 
@@ -59,7 +61,7 @@ effectively off everywhere at step 0 and the model behaves like the pre-trained
 base. The gates then *learn to open* only on inputs where opening reduces the
 fine-tuning loss.
 
-- **Default: $b_g = -3$** ($\sigma(-3)\!\approx\!0.05$). This is what we use
+- **Default: $b_g = -3$** ($\sigma(-3) \approx 0.05$). This is what we use
   for all LLaMA-2-7B and Mistral-7B experiments.
 - **More conservative starts (`b_g = -5` or `-7`) help on small datasets**,
   where you want to preserve pre-training more strongly and rely on the gate
