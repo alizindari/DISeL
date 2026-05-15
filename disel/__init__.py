@@ -13,11 +13,13 @@ Public API:
 
 from .config import DiselConfig
 from .integration import (
+    GATE_FILENAME,
     GATE_PARAM_KEY,
     build_optimizer,
     enable_disel,
     from_pretrained,
     load_gate_state_dict,
+    save_gate_state_dict,
 )
 from .layer import LightRankGate, RankGate
 from .variant import DiselLinearVariant
@@ -25,6 +27,7 @@ from .variant import DiselLinearVariant
 __all__ = [
     "DiselConfig",
     "DiselLinearVariant",
+    "GATE_FILENAME",
     "GATE_PARAM_KEY",
     "LightRankGate",
     "RankGate",
@@ -32,6 +35,7 @@ __all__ = [
     "enable_disel",
     "from_pretrained",
     "load_gate_state_dict",
+    "save_gate_state_dict",
 ]
 
 __version__ = "0.1.0"

@@ -227,6 +227,42 @@ silently leaves the gates at their fresh init — covered by
 `tests/test_disel.py::test_save_load_round_trip`, which asserts bit-exact
 parameter round-trips and matching forward passes.
 
+#### Optional: keep gates in a separate file
+
+If you prefer to keep gate weights in their own file alongside the LoRA
+checkpoint (the convention used in the original research repo), call
+`disel.save_gate_state_dict` after the usual save:
+
+```python
+model.save_pretrained("checkpoints/disel_run")              # adapter_model.safetensors
+disel.save_gate_state_dict(model, "checkpoints/disel_run")  # gate_weights.safetensors
+```
+
+`disel.load_gate_state_dict` (and therefore `disel.from_pretrained`) reads
+either layout — the bundled `adapter_model.safetensors` first, falling back
+to a standalone `gate_weights.safetensors` (or legacy `gate_weights.pt`).
+
+### End-to-end lifecycle
+
+The three example scripts mirror what a paper-style run looks like:
+
+```bash
+# 1. Train (LLaMA-2-7B on MetaMathQA, full paper recipe)
+accelerate launch examples/train_metamath.py \
+    --output_dir runs/disel_llama_r64 \
+    --lora_rank 64 --learning_rate 2e-4 --gate_lr 1e-3 \
+    --num_train_epochs 3
+
+# 2. Quick smoke check that load + inference work
+python examples/eval_gsm8k.py \
+    --base meta-llama/Llama-2-7b-hf \
+    --adapter runs/disel_llama_r64 \
+    --num_problems 200
+
+# 3. Full paper-style evaluation (target task + 14-benchmark retention)
+#    handled by lm-evaluation-harness; see examples/README.md
+```
+
 ## Results
 
 The hero figure above covers the two large-scale settings: **mathematical

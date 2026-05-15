@@ -40,11 +40,19 @@ from .variant import DiselLinearVariant
 
 __all__ = [
     "GATE_PARAM_KEY",
+    "GATE_FILENAME",
     "build_optimizer",
     "enable_disel",
     "from_pretrained",
     "load_gate_state_dict",
+    "save_gate_state_dict",
 ]
+
+# Standalone file used by `save_gate_state_dict` / `load_gate_state_dict` when
+# users prefer to keep gates separate from `adapter_model.safetensors`. This
+# matches the convention used in the original research repo
+# (`localised-neurons/scripts/gated_lora.py`).
+GATE_FILENAME = "gate_weights.safetensors"
 
 # Name under which gate ModuleDicts are stored on each LoraLayer. Matches the
 # entry added to `adapter_layer_names` by :class:`DiselLinearVariant.init`, so
@@ -205,17 +213,71 @@ def build_optimizer(
     return torch.optim.AdamW(groups, betas=betas, eps=eps)
 
 
-def _read_adapter_state(adapter_path: Path) -> dict[str, torch.Tensor]:
-    sft = adapter_path / "adapter_model.safetensors"
-    bin_ = adapter_path / "adapter_model.bin"
-    if sft.is_file():
+def _read_safetensors_or_bin(path: Path) -> dict[str, torch.Tensor]:
+    if path.suffix == ".safetensors":
         from safetensors.torch import load_file
-        return load_file(str(sft))
-    if bin_.is_file():
-        return torch.load(bin_, map_location="cpu", weights_only=True)
-    raise FileNotFoundError(
-        f"no adapter_model.safetensors or adapter_model.bin in {adapter_path}"
-    )
+        return load_file(str(path))
+    return torch.load(path, map_location="cpu", weights_only=True)
+
+
+def _find_adapter_state_file(adapter_path: Path) -> Optional[Path]:
+    for name in ("adapter_model.safetensors", "adapter_model.bin"):
+        candidate = adapter_path / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _find_gate_state_file(adapter_path: Path) -> Optional[Path]:
+    for name in (
+        GATE_FILENAME,
+        "gate_weights.pt",   # legacy filename used by the research repo
+    ):
+        candidate = adapter_path / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _iter_gate_named_params(model: nn.Module, adapter_name: str):
+    suffix_prefix = f".{GATE_PARAM_KEY}.{adapter_name}."
+    for name, param in model.named_parameters():
+        if suffix_prefix in name:
+            yield name, param
+
+
+def save_gate_state_dict(
+    model: PeftModel,
+    save_directory: Union[str, Path],
+    adapter_name: str = "default",
+    filename: str = GATE_FILENAME,
+) -> Path:
+    """Save the DISeL gate parameters to a standalone safetensors file.
+
+    Most users do *not* need to call this — ``model.save_pretrained(path)``
+    already writes the gates into ``adapter_model.safetensors`` alongside the
+    LoRA factors (the ``lora_`` prefix on ``lora_disel_gate`` is what makes
+    PEFT's serializer include them). Use this only if you want a separate
+    file you can copy or swap independently of the LoRA weights — matching
+    the ``gate_weights.pt`` convention from the research repo.
+
+    Returns the path the gates were written to.
+    """
+    save_directory = Path(save_directory)
+    save_directory.mkdir(parents=True, exist_ok=True)
+    gate_state = {
+        name: param.detach().cpu()
+        for name, param in _iter_gate_named_params(model, adapter_name)
+    }
+    if not gate_state:
+        raise RuntimeError(
+            f"No DISeL gates found for adapter {adapter_name!r}. Did you "
+            "remember to call enable_disel(...) on this model?"
+        )
+    out_path = save_directory / filename
+    from safetensors.torch import save_file
+    save_file(gate_state, str(out_path))
+    return out_path
 
 
 def load_gate_state_dict(
@@ -227,22 +289,38 @@ def load_gate_state_dict(
 
     The model must already have DISeL attached (i.e. :func:`enable_disel` must
     have run, so the ``lora_disel_gate`` ModuleDicts exist on every LoRA
-    layer). This function reads ``adapter_model.safetensors`` (or
-    ``adapter_model.bin``) from ``adapter_path``, filters for keys containing
-    ``GATE_PARAM_KEY``, and applies them with ``load_state_dict(strict=False)``.
+    layer). The function tries, in order:
 
-    Raises ``ValueError`` if the checkpoint has no gate keys (the saved model
-    was not trained with DISeL), and ``RuntimeError`` if there are gate keys
-    in the checkpoint that have no destination in the model (likely an
-    adapter-name mismatch).
+      1. The bundled ``adapter_model.safetensors`` / ``adapter_model.bin``
+         file written by ``model.save_pretrained(...)``. Keys are filtered by
+         the ``lora_disel_gate`` substring.
+      2. A standalone ``gate_weights.safetensors`` (or legacy
+         ``gate_weights.pt``) file written by :func:`save_gate_state_dict`.
+
+    Raises ``ValueError`` if no gate weights are found in either location
+    and ``RuntimeError`` if some checkpoint keys do not match the model.
     """
     adapter_path = Path(adapter_path)
-    state = _read_adapter_state(adapter_path)
-    gate_state = {k: v for k, v in state.items() if GATE_PARAM_KEY in k}
+
+    # Try the bundled file first.
+    gate_state: dict[str, torch.Tensor] = {}
+    bundled = _find_adapter_state_file(adapter_path)
+    if bundled is not None:
+        state = _read_safetensors_or_bin(bundled)
+        gate_state = {k: v for k, v in state.items() if GATE_PARAM_KEY in k}
+
+    # Fall back to a standalone gate file.
+    if not gate_state:
+        standalone = _find_gate_state_file(adapter_path)
+        if standalone is not None:
+            gate_state = _read_safetensors_or_bin(standalone)
+
     if not gate_state:
         raise ValueError(
-            f"No '{GATE_PARAM_KEY}' keys in {adapter_path}; the saved adapter "
-            "does not appear to have been trained with DISeL."
+            f"No DISeL gate weights found in {adapter_path}. "
+            f"Looked for '{GATE_PARAM_KEY}' keys in "
+            f"adapter_model.safetensors/bin and for a standalone "
+            f"gate_weights.safetensors / gate_weights.pt."
         )
 
     missing, unexpected = model.load_state_dict(gate_state, strict=False)

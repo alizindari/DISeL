@@ -206,6 +206,96 @@ def test_disable_adapter_recovers_base():
     assert torch.allclose(base_logits, disabled_logits, atol=1e-5)
 
 
+def test_end_to_end_train_save_load_infer(tmp_path: Path):
+    """End-to-end smoke test mirroring the user-facing workflow.
+
+    Train (a few steps) → save_pretrained → fresh process: build base, then
+    disel.from_pretrained → inference. Verify the inference output is the
+    same as the trained model's, and that the gate parameters are NOT at
+    their fresh init (i.e. the training and the reload actually transferred).
+    """
+    torch.manual_seed(0)
+    model, _ = _build_model()
+    model.train()
+    inputs = _dummy_batch()
+
+    opt = disel.build_optimizer(model, base_lr=1e-2, gate_lr=1e-2)
+    for _ in range(3):
+        out = model(inputs, labels=inputs)
+        out.loss.backward()
+        opt.step()
+        opt.zero_grad()
+
+    model.eval()
+    with torch.no_grad():
+        ref_logits = model(inputs).logits.clone()
+
+    # Save just like a real user would.
+    out_dir = tmp_path / "checkpoint"
+    model.save_pretrained(out_dir)
+
+    # Reload from scratch — the only thing carried across is `out_dir`.
+    base = AutoModelForCausalLM.from_pretrained(TINY_MODEL).eval()
+    reloaded = disel.from_pretrained(base, out_dir)
+    reloaded.eval()
+
+    # Sanity: the reloaded gate biases should not all be exactly -3.
+    for name, p in reloaded.named_parameters():
+        if name.endswith(f".{disel.GATE_PARAM_KEY}.default.linear.bias"):
+            assert not torch.allclose(p, torch.full_like(p, -3.0)), (
+                "gate bias is still at fresh init — load_gate_state_dict did "
+                "not fire"
+            )
+            break
+    else:
+        raise AssertionError("no gate bias parameter found in reloaded model")
+
+    with torch.no_grad():
+        loaded_logits = reloaded(inputs).logits
+
+    assert torch.allclose(ref_logits, loaded_logits, atol=1e-5), (
+        f"inference differs after save/load: max diff = "
+        f"{(ref_logits - loaded_logits).abs().max().item():.3e}"
+    )
+
+
+def test_standalone_gate_file_round_trip(tmp_path: Path):
+    """Verify the optional separate-file save/load path (gate_weights.safetensors)
+    used by people who prefer the localised-neurons convention of keeping
+    gates separate from adapter_model.safetensors."""
+    torch.manual_seed(0)
+    model, _ = _build_model()
+    model.train()
+    inputs = _dummy_batch()
+
+    opt = disel.build_optimizer(model, base_lr=1e-2, gate_lr=1e-2)
+    for _ in range(2):
+        out = model(inputs, labels=inputs)
+        out.loss.backward()
+        opt.step()
+        opt.zero_grad()
+
+    snapshot = {
+        n: p.detach().clone()
+        for n, p in model.named_parameters()
+        if disel.GATE_PARAM_KEY in n
+    }
+
+    out_dir = tmp_path / "gates_only"
+    written = disel.save_gate_state_dict(model, out_dir)
+    assert written.is_file()
+    assert written.name == disel.GATE_FILENAME
+
+    # Wipe gates on a fresh model and reload via the standalone path.
+    fresh, _ = _build_model()
+    fresh.eval()
+    disel.load_gate_state_dict(fresh, out_dir)
+
+    for n, before in snapshot.items():
+        after = dict(fresh.named_parameters())[n]
+        assert torch.equal(before, after), f"{n} did not round-trip via standalone gate file"
+
+
 def test_merge_raises_not_implemented():
     model, _ = _build_model()
     with pytest.raises(NotImplementedError):
