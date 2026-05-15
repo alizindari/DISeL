@@ -1,4 +1,25 @@
+<div align="center">
+
 # DISeL
+
+### *Fine-tuning with near-zero forgetting*
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org)
+[![PyTorch 2.1+](https://img.shields.io/badge/PyTorch-2.1+-EE4C2C.svg?logo=pytorch&logoColor=white)](https://pytorch.org)
+[![PEFT 0.13–0.19](https://img.shields.io/badge/peft-0.13–0.19-FFD43B.svg)](https://github.com/huggingface/peft)
+[![Paper](https://img.shields.io/badge/paper-coming_soon-lightgrey.svg)](#citation)
+
+<img src="assets/llama_tradeoff.png" width="78%"/>
+
+<em>LLaMA-2-7B fine-tuned on MetaMathQA. <strong>DISeL (red)</strong> sits on the
+base model's retention line while matching the strongest fine-tuning accuracy.
+Every other adapter family either forgets visibly (LoRA / DoRA / Full FT) or
+loses accuracy to preserve retention (AdaLoRA).</em>
+
+</div>
+
+---
 
 **DISeL** (*Dynamic Input-Sensitive LoRA*) makes LoRA's correction
 **input-dependent**.
@@ -122,7 +143,7 @@ pip install -e ".[examples]"
 
 Python ≥ 3.10, `torch ≥ 2.1`, `transformers ≥ 4.40`, `peft ≥ 0.13, < 0.20`.
 
-## Use it in your own training script
+## Quickstart
 
 ```python
 import torch
@@ -161,6 +182,45 @@ through the DISeL computation. Calling `model.save_pretrained(...)` writes the
 gate parameters into the same `adapter_model.safetensors` as the LoRA matrices,
 and `PeftModel.from_pretrained(...)` followed by another `enable_disel(...)`
 restores them verbatim.
+
+## Results
+
+Across three model families and three evaluation suites, DISeL keeps retention
+within a fraction of a point of the unmodified base model while matching or
+exceeding the fine-tuning accuracy of LoRA, DoRA, AdaLoRA, and Full FT.
+
+### Mathematical reasoning — LLaMA-2-7B on MetaMathQA
+
+See the hero figure at the top of this README. DISeL crosses the base-model
+retention line (dashed) at the largest ranks while reaching ≈60% GSM8K
+accuracy; LoRA and DoRA give up 2–5 points of retention for similar accuracy;
+AdaLoRA preserves retention but drops 10+ accuracy points; Full FT moves
+∼4 points to the left of the retention line.
+
+### Code generation — Mistral-7B on Magicoder
+
+<div align="center">
+<img src="assets/mistral_tradeoff.png" width="78%"/>
+<br/>
+<em>Mistral-7B fine-tuned on Magicoder-Evol-Instruct-110K, evaluated on
+HumanEval (pass@1) vs. a 14-benchmark retention suite. DISeL reaches ≈70%
+HumanEval while staying at the base model's retention line.</em>
+</div>
+
+### GLUE — RoBERTa-base
+
+<!-- Drop the RoBERTa GLUE tradeoff figure into assets/roberta_glue.png to
+     enable this block. The PDF version is `all_methods_simple_acc.pdf`. -->
+<div align="center">
+<!-- <img src="assets/roberta_glue.png" width="78%"/> -->
+<em>(figure placeholder — copy <code>all_methods_simple_acc.pdf</code>'s PNG
+to <code>assets/roberta_glue.png</code>)</em>
+<br/>
+<em>RoBERTa-base fine-tuned on five GLUE tasks. DISeL keeps masked-LM
+perplexity near the pre-trained baseline (≈9, dashed line) while matching
+the accuracy of AdaLoRA and Full FT; LoRA, DoRA, and especially Full FT shift
+1–2 decades to the right on the perplexity axis.</em>
+</div>
 
 ## What is and isn't supported
 
