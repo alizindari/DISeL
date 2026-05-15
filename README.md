@@ -202,17 +202,14 @@ The same picture also holds on a much smaller architecture (RoBERTa-base on
 five GLUE tasks), where the appropriate retention metric is masked-LM
 perplexity on three out-of-domain corpora rather than benchmark accuracy:
 
-<!-- Drop the RoBERTa GLUE tradeoff figure into assets/roberta_glue.png to
-     enable this block. The PDF version is `all_methods_simple_acc.pdf`. -->
 <div align="center">
-<!-- <img src="assets/roberta_glue.png" width="78%"/> -->
-<em>(figure placeholder — copy <code>all_methods_simple_acc.pdf</code>'s PNG
-to <code>assets/roberta_glue.png</code>)</em>
+<img src="assets/roberta_glue.png" width="88%"/>
 <br/>
-<em>RoBERTa-base fine-tuned on five GLUE tasks. DISeL keeps masked-LM
-perplexity near the pre-trained baseline (≈9, dashed line) while matching the
-accuracy of AdaLoRA and Full FT; LoRA, DoRA, and especially Full FT shift 1–2
-decades to the right on the perplexity axis.</em>
+<em>RoBERTa-base fine-tuned on five GLUE tasks (MNLI, SST-2, QNLI, CoLA,
+MRPC). DISeL keeps masked-LM perplexity near the pre-trained baseline
+(dashed line, ≈ 6.4) while matching the accuracy of AdaLoRA and Full FT;
+LoRA, DoRA, and especially Full FT shift one to two decades to the right on
+the perplexity axis.</em>
 </div>
 
 ## What is and isn't supported
