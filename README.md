@@ -1,20 +1,41 @@
 # DISeL
 
-**DISeL** (*Dynamic Input-Sensitive LoRA*) attaches a per-rank,
-input-dependent sigmoid gate to the standard LoRA branch:
+**DISeL** (*Dynamic Input-Sensitive LoRA*) makes LoRA's correction
+**input-dependent**.
+
+Standard LoRA learns a single low-rank correction $\Delta W = AB$ and adds it
+to the frozen weight on *every* input. Because the same update is applied
+everywhere, fine-tuning has to compromise between (i) adapting on inputs that
+look like the fine-tuning data and (ii) preserving the pre-trained mapping
+elsewhere — a structural source of catastrophic forgetting.
+
+DISeL keeps the rank-$r$ factorisation but multiplies each rank-one component
+by an input-dependent sigmoid gate:
 
 $$
-\Delta W(x)\,x \;=\; \frac{\alpha}{r}\, B\bigl(g(x)\odot A x\bigr),
+f(x) \;=\; A\,G(x)\,B\,x \;=\; \sum_{i=1}^{r} g_i(x)\,a_i\,b_i^{\!\top} x,
 \qquad
 g(x) \;=\; \sigma(W_g\,x + b_g) \in (0,1)^{r}.
 $$
 
-The gate is initialised nearly closed (`b_g = -3`, so `σ(-3) ≈ 0.047`), so at
-the start of training the model is indistinguishable from the frozen base; the
-gate then opens selectively on input tokens that benefit from adaptation,
-leaving the rest of the input distribution untouched. This drops forgetting
-sharply versus vanilla LoRA at matched fine-tuning accuracy. See the paper for
-the full story.
+Two properties follow directly from the parameterisation:
+
+1. **The model starts at the pre-trained mapping.** Initialising $b_g$ to a
+   small negative value (we use $-3$, so $\sigma(-3)\!\approx\!0.05$) closes
+   every gate at step 0, and combined with LoRA's standard zero-init on $B$
+   this means $f(x)=0$ everywhere. Adaptation only kicks in when some gate
+   learns to open.
+2. **Gates open only where opening reduces the fine-tuning loss.** Each gate
+   is an independent soft switch (sigmoid, not softmax), so multiple ranks
+   can open at once and out-of-distribution tokens can keep them all closed.
+   In practice the gates do exactly that — see the paper's interpretability
+   section for histograms by input domain and module type.
+
+The gate adds $r\,d_x + r$ parameters per adapted layer (negligible next to
+$A,B$) and a single matrix-vector product per forward pass. Because gate
+learning is a qualitatively different task from refining $A,B$, we train it
+with its own (larger) learning rate — by default $5\times$ the LoRA learning
+rate — exposed as a separate optimiser group.
 
 This repository is the minimal reference implementation that accompanies the
 paper. It ships as a `pip install disel`-able package built on top of
@@ -122,13 +143,7 @@ canonical contribution flow.
 
 ## Citation
 
-```bibtex
-@article{disel2026,
-  title  = {DISeL: Dynamic Input-Sensitive LoRA for Forgetting-Free Fine-Tuning},
-  author = {Zindari, Ali and TODO},
-  year   = {2026},
-}
-```
+Coming soon.
 
 ## License
 
