@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "disel"
+version = "0.1.0"
+description = "DISeL: a per-rank, input-dependent sigmoid gate on top of LoRA"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [{ name = "Ali Zindari" }]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.1",
+    "transformers>=4.40",
+    "peft>=0.13,<0.20",
+    "accelerate>=0.30",
+    "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "pytest-xdist"]
+examples = ["datasets>=2.18", "trl>=0.9"]
+
+[project.urls]
+Homepage = "https://github.com/<TODO>/disel"
+Issues = "https://github.com/<TODO>/disel/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["disel"]
